@@ -128,10 +128,14 @@ async def trace(
         if not req.score or not cfg.ml_api_url:
             return None
         try:
+            target_chain = [t.chain for t in req.targets][0]
+            target_addrs = [t.address for t in req.targets]
+            score_addrs = target_addrs + [a for a in all_addrs if a not in set(target_addrs)]
             return await sb.score_with_ml(
-                [t.address for t in req.targets],
-                [e for e in tr.edges if e.chain == [t.chain for t in req.targets][0]],
-                {},
+                target_chain,
+                score_addrs,
+                [e for e in tr.edges if e.chain == target_chain],
+                flags,
             )
         except Exception as exc:                        # noqa: BLE001
             log.error("ML scoring failed: %s", exc)

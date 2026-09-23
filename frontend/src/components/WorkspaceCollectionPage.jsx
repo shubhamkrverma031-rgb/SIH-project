@@ -92,36 +92,17 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
       };
 
       await addToWatchlist(entry);
-      showToast("✓ Added to Supabase Watchlist & 24/7 Surveillance Loop!");
+      showToast("Added to Supabase Watchlist & 24/7 Surveillance Loop!");
       setIsAddModalOpen(false);
       setNewAddress("");
       setNewLabel("");
       setNewReason("");
+      setLoadError(null);
       loadData();
     } catch (err) {
       console.error(err);
-      // Fallback local update
-      setWatchlist(prev => [
-        {
-          id: `local-${Date.now()}`,
-          address: newAddress.trim(),
-          label: newLabel.trim() || "Suspect Mule Node",
-          chain: newChain,
-          risk_score: Number(newRisk),
-          risk: Number(newRisk) >= 90 ? "CRITICAL" : "HIGH",
-          reason: newReason.trim() || "Manual surveillance flag added by IO",
-          typology: newTypology,
-          added_at: new Date().toISOString(),
-          status: "ACTIVE_SWEEP",
-          last_active: "Just now",
-          value_usdt: 15420.00,
-          value_inr: 1372380,
-          hop_depth: 2
-        },
-        ...prev
-      ]);
-      setIsAddModalOpen(false);
-      showToast("✓ Added to active surveillance queue!");
+      setLoadError(err?.message || String(err));
+      showToast("Failed to add wallet to backend watchlist");
     }
   };
 
@@ -130,15 +111,17 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
     try {
       await removeFromWatchlist(id);
       showToast("Removed from active surveillance queue");
+      setLoadError(null);
       setWatchlist(prev => prev.filter(item => item.id !== id));
     } catch (err) {
       console.error(err);
-      setWatchlist(prev => prev.filter(item => item.id !== id));
-      showToast("Removed from active surveillance queue");
+      setLoadError(err?.message || String(err));
+      showToast("Failed to remove watchlist row");
     }
   };
 
   const isWatchlist = view === "watchlist";
+
 
   // Filtered Watchlist items
   const filteredWatchlist = useMemo(() => {
@@ -162,6 +145,29 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
   // Total illicit volume in watchlist
   const totalWatchlistINR = useMemo(() => {
     return watchlist.reduce((acc, curr) => acc + (curr.value_inr || (curr.value_usdt ? curr.value_usdt * 89 : 0)), 0);
+  }, [watchlist]);
+
+  const watchlistRiskSummary = useMemo(() => {
+    if (!watchlist.length) {
+      return { band: "UNSCORED", score: null, note: "No backend risk scores yet" };
+    }
+
+    const scored = watchlist.filter((item) => Number.isFinite(Number(item.risk_score)));
+    if (!scored.length) {
+      return { band: "UNSCORED", score: null, note: "Backend rows have not been scored yet" };
+    }
+
+    const top = scored.reduce((best, item) => (
+      Number(item.risk_score) > Number(best.risk_score) ? item : best
+    ), scored[0]);
+    const score = Math.round(Number(top.risk_score));
+    const band = String(top.risk || (score >= 90 ? "CRITICAL" : score >= 75 ? "HIGH" : score >= 35 ? "MEDIUM" : "LOW")).toUpperCase();
+
+    return {
+      band,
+      score,
+      note: top.reason || top.typology || "Backend-derived risk signal",
+    };
   }, [watchlist]);
 
   return (
@@ -270,10 +276,10 @@ export function WorkspaceCollectionPage({ view, graph, onNavigate }) {
             </div>
           </div>
           <div className="mt-3 text-2xl font-extrabold text-rose-700 dark:text-amber-400 font-mono">
-            CRITICAL (95%)
+            {watchlistRiskSummary.band}{watchlistRiskSummary.score != null ? ` (${watchlistRiskSummary.score}%)` : ""}
           </div>
           <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-            Multi-hop VASP deposit risk detected
+            {watchlistRiskSummary.note}
           </div>
         </div>
 

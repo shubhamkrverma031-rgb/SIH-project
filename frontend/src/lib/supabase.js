@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { readPref, writePref } from "./storage.js";
 
 // Credentials come from the environment ONLY. Nothing is hardcoded here:
 // a live project URL committed to a public repository is a real disclosure,
@@ -34,89 +33,115 @@ function notConfigured(what) {
   );
 }
 
-function getLocal(key, fallback = []) {
-  try {
-    const val = readPref(`chakravyuh_${key}`);
-    return val ? JSON.parse(val) : fallback;
-  } catch {
-    return fallback;
-  }
+// ?? Watchlist Operations (Live DB) ?????????????????????????????????????
+function parseWatchlistAmount(value) {
+  if (value == null) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric;
+  const match = String(value).match(/([\d,.]+)/);
+  if (!match) return null;
+  const parsed = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function setLocal(key, data) {
-  try {
-    writePref(`chakravyuh_${key}`, JSON.stringify(data));
-  } catch (e) {
-    console.warn("LocalStorage save error", e);
-  }
+function watchlistRiskBand(score) {
+  if (score == null || !Number.isFinite(score)) return "UNSCORED";
+  if (score >= 90) return "CRITICAL";
+  if (score >= 75) return "HIGH";
+  if (score >= 35) return "MEDIUM";
+  return "LOW";
 }
 
-// ── Watchlist Operations (Live DB & Local Cache) ───────────────────────
+function normaliseWatchlistRow(item) {
+  const riskScoreValue = Number(item?.risk_score);
+  const riskScore = Number.isFinite(riskScoreValue) ? riskScoreValue : null;
+  const valueUsdt = parseWatchlistAmount(item?.value_usdt ?? item?.last_tx_value);
+  const valueInrRaw = Number(item?.value_inr);
+  const valueInr = Number.isFinite(valueInrRaw)
+    ? valueInrRaw
+    : (valueUsdt != null ? Math.round(valueUsdt * USD_INR) : null);
+
+  return {
+    ...item,
+    risk_score: riskScore,
+    risk: item?.risk || watchlistRiskBand(riskScore),
+    value_usdt: valueUsdt,
+    value_inr: valueInr,
+  };
+}
+
 export async function fetchWatchlist() {
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.from("watchlist").select("*").order("added_at", { ascending: false });
-      if (!error && data) return data;
-    } catch (err) {
-      console.warn("Supabase watchlist fetch fallback", err);
-    }
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cannot load the watchlist: Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
+    );
   }
-  return notConfigured("the watchlist");
+
+  const { data, error } = await supabase
+    .from("watchlist")
+    .select("*")
+    .order("added_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch watchlist: ${error.message}`);
+  }
+
+  return (data ?? []).map(normaliseWatchlistRow);
 }
 
 export async function addToWatchlist(item) {
-  const newItem = {
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cannot add to the watchlist: Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
+    );
+  }
+
+  const valueUsdt = parseWatchlistAmount(item.value_usdt ?? item.last_tx_value);
+  const riskScoreValue = Number(item.risk_score);
+  const riskScore = Number.isFinite(riskScoreValue) ? riskScoreValue : null;
+  const persisted = {
     id: `w-${Date.now()}`,
     // address first: item.id can be a UI node key, not a chain address
     address: item.address || item.id || item.origin_sender || item.counterparty,
     label: item.label || item.origin_label || item.counterparty_label || "Monitored Entity",
     chain: item.chain || null,
-    risk: item.risk ?? (Number(item.risk_score) >= 80 ? "CRITICAL"
-          : Number(item.risk_score) >= 60 ? "HIGH"
-          : Number(item.risk_score) >= 35 ? "MEDIUM"
-          : Number.isFinite(Number(item.risk_score)) ? "LOW" : "UNSCORED"),
-    // No invented score. If the trace did not produce one, the record
-    // carries null and the UI shows "not scored" rather than a number
-    // nobody can justify.
-    risk_score: Number.isFinite(Number(item.risk_score)) ? Number(item.risk_score) : null,
+    risk: item.risk || watchlistRiskBand(riskScore),
+    risk_score: riskScore,
     reason: item.reason || item.audit_notes || "Added from live investigation trace",
-    added_at: new Date().toISOString(),
-    status: "ACTIVE_SURVEILLANCE",
-    last_tx_value: item.value_usdt ? `${item.value_usdt} USDT` : item.last_tx_value || "Active",
+    added_at: item.added_at || new Date().toISOString(),
+    status: item.status || "ACTIVE_SURVEILLANCE",
+    last_tx_value: item.last_tx_value || (valueUsdt != null ? `${valueUsdt} USDT` : "Active"),
   };
 
-  const current = getLocal("watchlist", []);
-  const updated = [newItem, ...current.filter(w => w.address !== newItem.address)];
-  setLocal("watchlist", updated);
+  const { data, error } = await supabase
+    .from("watchlist")
+    .insert([persisted])
+    .select("*")
+    .single();
 
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.from("watchlist").insert([newItem]);
-    } catch (err) {
-      console.warn("Supabase insert error", err);
-    }
+  if (error) {
+    throw new Error(`Failed to add watchlist row: ${error.message}`);
   }
 
-  return newItem;
+  return normaliseWatchlistRow(data ?? persisted);
 }
 
 export async function removeFromWatchlist(id) {
-  const current = getLocal("watchlist", []);
-  const updated = current.filter(w => w.id !== id && w.address !== id);
-  setLocal("watchlist", updated);
-
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.from("watchlist").delete().eq("id", id);
-    } catch (err) {
-      console.warn("Supabase delete error", err);
-    }
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cannot remove from the watchlist: Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
+    );
   }
 
-  return updated;
+  const { error } = await supabase.from("watchlist").delete().eq("id", id);
+  if (error) {
+    throw new Error(`Failed to remove watchlist row: ${error.message}`);
+  }
+
+  return true;
 }
 
-// ── Legal Dossier Operations (Live DB & Local Cache) ───────────────────
+// ---- Legal Dossier Operations (Live DB & Local Cache) ───────────────
 export async function fetchDossiers() {
   if (isSupabaseConfigured) {
     try {

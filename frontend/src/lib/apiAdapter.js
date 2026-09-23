@@ -91,6 +91,8 @@ export function normalizeBackendTrace(payload) {
       label: e.label,
       animated: !!e.animated,
       risk: d.risk ?? null,
+      riskScore: Number(d.risk?.score ?? d.risk_score ?? 0),
+      riskBand: d.risk?.band ?? d.risk_band ?? null,
       relevance: d.relevance ?? null,
       evidence: d.evidence ?? [],
       flags: d.flags ?? [],
