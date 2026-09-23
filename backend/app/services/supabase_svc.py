@@ -33,6 +33,9 @@ class SupabaseService:
         self.cfg = cfg
         self._rest = f"{cfg.supabase_url}/rest/v1"
 
+    def _has_url(self) -> bool:
+        return bool(self.cfg.supabase_url)
+
     # ---- headers ------------------------------------------------------
     def _svc_headers(self) -> dict[str, str]:
         key = self.cfg.supabase_service_role_key
@@ -420,11 +423,14 @@ class SupabaseService:
             # reasons; SHAP adds model internals on top, not instead.
             "explain": False,
         }
+        headers = {}
+        if self.cfg.ml_api_key:
+            headers["Authorization"] = f"Bearer {self.cfg.ml_api_key}"
         try:
             async with httpx.AsyncClient(timeout=self.cfg.ml_timeout_seconds) as c:
                 r = await c.post(
                     f"{self.cfg.ml_api_url.rstrip('/')}/ml/score",
-                    headers={"Authorization": f"Bearer {self.cfg.ml_api_key or ''}"},
+                    headers=headers,
                     json=payload)
                 if r.status_code >= 400:
                     log.error("ML service %s: %s", r.status_code, r.text[:300])

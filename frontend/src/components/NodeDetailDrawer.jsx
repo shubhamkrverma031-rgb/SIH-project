@@ -49,7 +49,10 @@ export function NodeDetailDrawer({ entity, onClose, onWatchlistUpdated, onDossie
   const entityType = entity.type || entity.classification || (isTransaction ? "ON-CHAIN TRANSFER" : "INTERMEDIARY");
   const balance = entity.value_usdt != null ? entity.value_usdt : (entity.amount != null ? entity.amount : (entity.balance != null ? entity.balance : 0));
   const inrValue = entity.value_inr || Math.round(Number(balance) * 88.5);
-  const riskScore = Math.round(Number(entity.riskScore ?? entity.risk_score ?? entity.risk ?? (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 35)));
+  const nestedRisk = entity.risk && typeof entity.risk === "object" ? entity.risk : null;
+  const rawRiskScore = entity.riskScore ?? entity.risk_score ?? nestedRisk?.score ?? entity.risk;
+  const riskScore = Math.round(Number(rawRiskScore ?? (entityType === "SUSPECT" ? 95 : entityType === "VASP" ? 99 : 35)));
+  const riskBand = String(entity.riskBand ?? entity.risk_band ?? nestedRisk?.band ?? "").toUpperCase();
   const chainName = entity.chain || "Polygon PoS";
   const firstSeen = entity.datetime_ist || (entity.timestamp ? new Date(entity.timestamp).toLocaleString("en-IN") : new Date().toLocaleString("en-IN"));
   const txHash = entity.tx_hash || (entity.txHashes && entity.txHashes[0]) || "";
@@ -331,7 +334,7 @@ Investigating Officer: ${officerProfile?.full_name || (officerProfile?.email ? o
                     ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
                     : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                 }`}>
-                  {entity.riskBand ? entity.riskBand.toUpperCase() : (riskScore >= 80 ? "CRITICAL" : riskScore >= 50 ? "HIGH" : "LOW")}
+                  {riskBand || (riskScore >= 80 ? "CRITICAL" : riskScore >= 50 ? "HIGH" : "LOW")}
                 </span>
               </div>
               <div className="text-slate-400 mt-1 text-xs">

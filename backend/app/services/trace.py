@@ -253,6 +253,10 @@ def build_graph(
         tx_rel = tx_info.get("relevance", {
             "score": 50.0, "taint_share": 0.0, "hop": 1
         })
+        evidence = tx_info.get("evidence", [])
+        if evidence and all(isinstance(item, str) for item in evidence):
+            evidence = [{"detail": item, "source": "risk_engine"}
+                        for item in evidence]
 
         edges.append({
             "id": f"e{i}",
@@ -266,7 +270,7 @@ def build_graph(
                 "txHashes": a["hashes"],
                 "risk": tx_risk,
                 "relevance": tx_rel,
-                "evidence": tx_info.get("evidence", []),
+                "evidence": evidence,
                 "flags": tx_info.get("flags", []),
                 "explorerUrls": [tx_explorer_url(a["chain"], h) for h in a["hashes"]],
             },
